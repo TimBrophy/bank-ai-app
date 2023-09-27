@@ -48,6 +48,46 @@ es = Elasticsearch(
 model_id = ".elser_model_1"
 embeddings = ElasticsearchEmbeddings.from_es_connection(model_id, es)
 
+def report_analyser_search_operation(index, question, report_name):
+    expansion_query = {
+        "bool": {
+            "should": [
+                {
+                    "text_expansion": {
+                        "ml.inference.text_expanded.predicted_value": {
+                            "model_id": model_id,
+                            "model_text": question
+                        }
+                    }
+                },
+                {
+                    "match": {
+                        "text": question
+                    }
+                }
+            ],
+            "filter": {
+                "term": {
+                    "report_name": report_name
+                }
+            }
+        }
+    }
+    field_list = ['page', 'text', '_score']
+    results = es.search(index=index, query=expansion_query, size=20, fields=field_list)
+    response_data = [{"_score": hit["_score"], **hit["_source"]} for hit in results["hits"]["hits"]]
+    documents = []
+    # Check if there are hits
+    if "hits" in results and "total" in results["hits"]:
+        total_hits = results["hits"]["total"]
+
+        # Check if there are any hits with a value greater than 0
+        if isinstance(total_hits, dict) and "value" in total_hits and total_hits["value"] > 0:
+            for hit in response_data:
+                if hit['_score'] > 0:
+                    doc_data = {field: hit[field] for field in field_list if field in hit}
+                    documents.append(doc_data)
+    return documents
 
 
 def customer_support_search_operation(index, question):
@@ -150,6 +190,29 @@ def set_assistant_type():
         st.session_state.assistant = 'Transaction analyser'
     return assistant_type
 
+def get_reports(index):
+    aggregation_query = {
+        "size": 0,
+        "query":{
+            "match_all": {
+            }
+        },
+        "aggs": {
+            "reports": {
+                "terms": {
+                    "field": "report_name",
+                    "size": 1000
+                }
+            }
+        }
+    }
+    reports = es.search(index=index, body=aggregation_query)
+    buckets = reports['aggregations']['reports']['buckets']
+    report_list = []
+    for bucket in buckets:
+        key = bucket['key']
+        report_list.append(key)
+    return report_list
 #------------------------------------------------
 #        start with the form and control flow
 #------------------------------------------------
@@ -164,6 +227,9 @@ with st.form("search-form"):
     question = st.text_input("Go ahead and ask your question:", placeholder="Please help me understand what I spend my money on...")
     if st.session_state.assistant_type == 'Transaction analyser':
         days = st.slider('How may days transactions should I use?', 1, 180, 90)
+    elif st.session_state.assistant_type == 'Report analyser':
+        report_name = st.selectbox('Which report do you want to analyse?', (get_reports('search-annual-reports')))
+
     submitted = st.form_submit_button("Submit")
 
 #-----------------------------------------------------------
@@ -186,7 +252,6 @@ with st.form("search-form"):
             Contexts: {string_results}
 
             Query: {question}"""
-
             messages = [
                 SystemMessage(content="You are a helpful financial analyst using transaction search results to give advice to customers. If you can asnwer a question, attempt to answer it fully."),
                 # HumanMessage(content="Hi AI, how are you today?"),
@@ -204,14 +269,29 @@ with st.form("search-form"):
             Context: {string_results}
 
             Query: {question}"""
-
             messages = [
                 SystemMessage(content="You are a helpful customer support agent that answers questions based only on the context provided. When you respond, please cite your source."),
                 # HumanMessage(content="Hi AI, how are you today?"),
                 # AIMessage(content="I am very good. How may I help you?"),
                 HumanMessage(content=augmented_prompt)
                 ]
-                        
+        elif st.session_state.assistant_type == 'Report analyser':
+            index = "search-annual-reports"
+            results = report_analyser_search_operation(index, question, report_name)
+            string_results = json.dumps(results)
+            df_results = pd.DataFrame(results)
+            string_results = truncate_text(string_results, 12000)
+            # interact with the LLM
+            augmented_prompt = f"""Using only the context below, answer the query.
+            Context: {string_results}
+
+            Query: {question}"""
+            messages = [
+                SystemMessage(content="You are a helpful analyst that answers questions based only on the context provided. When you respond, please cite your source."),
+                # HumanMessage(content="Hi AI, how are you today?"),
+                # AIMessage(content="I am very good. How may I help you?"),
+                HumanMessage(content=augmented_prompt)
+                ]
         st.subheader('Virtual assistant:')
         chat_bot = st.chat_message("ai assistant", avatar="🤖")
         # st.write(num_tokens_from_string(string_results, "cl100k_base"))
