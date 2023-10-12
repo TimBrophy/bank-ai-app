@@ -5,7 +5,6 @@ import streamlit as st
 import os
 import openai
 from elasticsearch import Elasticsearch
-from apikey import user, password, cloud_id, openai_api_key, openai_api_type, openai_api_base, openai_api_version
 from langchain.embeddings import ElasticsearchEmbeddings
 from langchain.chat_models import AzureChatOpenAI
 from langchain.schema import (
