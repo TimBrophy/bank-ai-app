@@ -28,12 +28,12 @@ os.environ['elastic_cloud_id'] = st.secrets['cloud_id']
 os.environ['elastic_user'] = st.secrets['user']
 os.environ['elastic_password'] = st.secrets['password']
 
-BASE_URL = openai_api_base
-API_KEY = openai_api_key
+BASE_URL = os.environ['openai_api_base']
+API_KEY = os.environ['openai_api_key']
 DEPLOYMENT_NAME = "timb-fsi-demo"
 chat_model = AzureChatOpenAI(
     openai_api_base=BASE_URL,
-    openai_api_version=openai_api_version,
+    openai_api_version=os.environ['openai_api_version'],
     deployment_name=DEPLOYMENT_NAME,
     openai_api_key=API_KEY,
     openai_api_type="azure",
