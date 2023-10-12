@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 import streamlit as st
 import os
@@ -14,6 +16,7 @@ from langchain.schema import (
 import tiktoken
 import json
 from datetime import datetime, timedelta
+from PIL import Image
 
 # ------------------------------------------
 #        connect to elasticsearch
@@ -83,7 +86,7 @@ def report_analyser_search_operation(index, question, report_name):
         # Check if there are any hits with a value greater than 0
         if isinstance(total_hits, dict) and "value" in total_hits and total_hits["value"] > 0:
             for hit in response_data:
-                if hit['_score'] > 0:
+                if hit['_score'] > 5:
                     doc_data = {field: hit[field] for field in field_list if field in hit}
                     documents.append(doc_data)
     return documents
@@ -184,8 +187,6 @@ def num_tokens_from_string(string: str, encoding_name: str) -> int:
 
 def truncate_text(text, max_tokens):
     tokens = text.split()
-    if len(tokens) <= max_tokens:
-        return text
     return ' '.join(tokens[:max_tokens])
 
 
@@ -267,27 +268,41 @@ def get_campaigns(index, text):
         # Check if there are any hits with a value greater than 0
         if isinstance(total_hits, dict) and "value" in total_hits and total_hits["value"] > 0:
             for hit in response_data:
-                if hit['_score'] > 0:
+                if hit['_score'] > 5:
                     doc_data = {field: hit[field] for field in field_list if field in hit}
                     documents.append(doc_data)
     return documents
+
+
+def calculate_cost(message):
+    cost_per_1k_prompt = 0.03
+    cost_per_1k_message = 0.06
+    message_token_count = num_tokens_from_string(message, "cl100k_base")
+    billable_message_tokens = message_token_count / 1000
+    rounded_up_message_tokens = math.ceil(billable_message_tokens)
+    message_cost = rounded_up_message_tokens * cost_per_1k_message
+    return message_cost
 
 
 # ------------------------------------------------
 #        start with the form and control flow
 # ------------------------------------------------
 
+image = Image.open('images/logo.png')
+
+st.image(image, width=200)
+
 if "chat_responses" not in st.session_state:
     st.session_state.chat_responses = []
 
-st.title('Universal assistant')
+st.title('Financial services assistant')
 assistant_type = st.selectbox("Which feature do you want to use?",
                               ('Transaction analyser', 'Customer support', 'Report analyser'), key='assistant_type',
                               on_change=set_assistant_type)
 
 with st.form("search-form"):
     st.session_state.question = st.text_input("Go ahead and ask your question:",
-                             placeholder="Please help me understand what I spend my money on...")
+                                              placeholder="Please help me understand what I spend my money on...")
     if st.session_state.assistant_type == 'Transaction analyser':
         days = st.slider('Number of days', 1, 180, 90)
         opt_in = st.toggle('Opt in to see special offers')
@@ -310,13 +325,14 @@ if submitted:
         df_results = pd.DataFrame(results)
 
         # interact with the LLM
-        augmented_prompt = f"""Using the contexts below, answer the query.
+        augmented_prompt = f"""Using only the contexts below, answer the query.
         Contexts: {string_results}
 
         Query: {st.session_state.question}"""
         messages = [
             SystemMessage(
-                content="You are a helpful financial analyst using transaction search results to give advice to customers. If you can asnwer a question, attempt to answer it fully."),
+                content="You are a helpful financial analyst using transaction search results to give advice to customers. "
+                        "If you can asnwer a question, attempt to answer it fully. Assume the context provided provides an accurate response to the query."),
             # HumanMessage(content="Hi AI, how are you today?"),
             # AIMessage(content="I am great thank you. How can I help you today?"),
             HumanMessage(content=augmented_prompt)
@@ -327,7 +343,7 @@ if submitted:
         results = customer_support_search_operation(st.session_state.index, st.session_state.question)
         string_results = json.dumps(results)
         df_results = pd.DataFrame(results)
-        string_results = truncate_text(string_results, 12000)
+        string_results = truncate_text(string_results, 10000)
         # interact with the LLM
         augmented_prompt = f"""Using only the context below, answer the query.
         Context: {string_results}
@@ -335,7 +351,8 @@ if submitted:
         Query: {st.session_state.question}"""
         messages = [
             SystemMessage(
-                content="You are a helpful customer support agent that answers questions based only on the context provided. When you respond, please cite your source."),
+                content="You are a helpful customer support agent that answers questions based only on the context provided. "
+                        "When you respond, please cite your source."),
             # HumanMessage(content="Hi AI, how are you today?"),
             # AIMessage(content="I am very good. How may I help you?"),
             HumanMessage(content=augmented_prompt)
@@ -345,10 +362,10 @@ if submitted:
         results = report_analyser_search_operation(st.session_state.index, st.session_state.question, report_name)
         string_results = json.dumps(results)
         df_results = pd.DataFrame(results)
-        string_results = truncate_text(string_results, 12000)
+        reduced_string_results = truncate_text(string_results, 8000)
         # interact with the LLM
         augmented_prompt = f"""Using only the context below, answer the query.
-        Context: {string_results}
+        Context: {reduced_string_results}
 
         Query: {st.session_state.question}"""
         messages = [
@@ -363,16 +380,24 @@ if submitted:
     chat_bot = st.chat_message("ai assistant", avatar="🤖")
     # st.write(num_tokens_from_string(string_results, "cl100k_base"))
     with st.status("Processing the data...") as status:
+        result_len = len(df_results)
+        status.update(label=f'Retrieved {result_len} results from Elasticsearch', state="running")
         current_chat_message = chat_model(messages).content
         st.session_state.chat_responses = current_chat_message
+        status.update(label=f'Reaching out to LLM', state="running")
         chat_bot.info(st.session_state.chat_responses)
+        cost_data = calculate_cost(st.session_state.chat_responses)
+        st.write(f"Calculating response cost: ${cost_data}")
         status.update(label="AI response complete!", state="complete")
+
+
+
+
     # handle any context data that we want to represent
     if st.session_state.assistant_type == 'Transaction analyser':
         campaigns = get_campaigns('search-campaigns', string_results)
         if len(campaigns):
             if opt_in:
-                st.write("Opted in")
                 campaign_string_results = json.dumps(campaigns)
                 df_campaigns = pd.DataFrame(campaigns)
                 # interact with the LLM
@@ -381,6 +406,7 @@ if submitted:
                 messages = [
                     SystemMessage(
                         content="You are a helpful customer support representative that can enthusiastically explain how our special offers can help them. "
+                                "Do not simply repeat the special offer text, rephrase it to be positive and rewarding."
                                 "Respond in no more than 80 words."),
                     HumanMessage(content=augmented_prompt)
                 ]
@@ -391,5 +417,4 @@ if submitted:
                 st.subheader('Campaign data:')
                 st.dataframe(df_campaigns)
         st.subheader('Transactions:')
-
     st.dataframe(df_results)
