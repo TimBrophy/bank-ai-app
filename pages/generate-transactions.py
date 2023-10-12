@@ -11,11 +11,10 @@ import numpy as np
 import random
 from datetime import datetime, timedelta
 from elasticsearch import Elasticsearch, helpers
-from apikey import user, password, cloud_id
 
-os.environ['elastic_user'] = user
-os.environ['elastic_password'] = password
-os.environ['elastic_cloud_id'] = cloud_id
+os.environ['elastic_cloud_id'] = st.secrets['cloud_id']
+os.environ['elastic_user'] = st.secrets['user']
+os.environ['elastic_password'] = st.secrets['password']
 es = Elasticsearch(
     cloud_id=os.environ['elastic_cloud_id'],
     http_auth=(os.environ['elastic_user'], os.environ['elastic_password'])
