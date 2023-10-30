@@ -51,7 +51,8 @@ embeddings = ElasticsearchEmbeddings.from_es_connection(model_id, es)
 
 
 def report_analyser_search_operation(index, question, report_name):
-    expansion_query = {
+    model_id = ".elser_model_1"
+    query = {
         "bool": {
             "should": [
                 {
@@ -75,8 +76,9 @@ def report_analyser_search_operation(index, question, report_name):
             }
         }
     }
+
     field_list = ['page', 'text', '_score']
-    results = es.search(index=index, query=expansion_query, size=20, fields=field_list)
+    results = es.search(index=index, query=query, size=20, fields=field_list)
     response_data = [{"_score": hit["_score"], **hit["_source"]} for hit in results["hits"]["hits"]]
     documents = []
     # Check if there are hits
@@ -130,7 +132,8 @@ def customer_support_search_operation(index, question):
 
 def transaction_search_operation(index, question, days):
     set_range_date = datetime.now() - timedelta(days=days)
-    expansion_query = {
+    model_id = ".elser_model_1"
+    query = {
         "bool": {
             "should": [
                 {
@@ -158,10 +161,11 @@ def transaction_search_operation(index, question, days):
             ]
         }
     }
-
     field_list = ['transaction_date', 'account_number', 'balance', 'description', 'transaction_type', 'value', 'entity',
                   '_score']
-    results = es.search(index=index, query=expansion_query, size=100, fields=field_list)
+    results = es.search(index=index, query=query, size=100, fields=field_list)
+
+
     response_data = [{"_score": hit["_score"], **hit["_source"]} for hit in results["hits"]["hits"]]
     documents = []
     # Check if there are hits
@@ -305,6 +309,10 @@ with st.form("search-form"):
     if st.session_state.assistant_type == 'Transaction analyser':
         days = st.slider('Number of days', 1, 180, 90)
         opt_in = st.toggle('Opt in to see special offers')
+        with st.expander('Sample questions:'):
+            st.write('Which subscription services do i have?')
+            st.write('How much do I spend on food and groceries?')
+            st.write('What are my favourite fashion retailers?')
     elif st.session_state.assistant_type == 'Report analyser':
         report_name = st.selectbox('Which report do you want to analyse?', (get_reports('search-annual-reports')))
 
@@ -377,7 +385,6 @@ if submitted:
         ]
     st.subheader('Virtual assistant:')
     chat_bot = st.chat_message("ai assistant", avatar="🤖")
-    # st.write(num_tokens_from_string(string_results, "cl100k_base"))
     with st.status("Processing the data...") as status:
         result_len = len(df_results)
         status.update(label=f'Retrieved {result_len} results from Elasticsearch', state="running")
@@ -389,11 +396,9 @@ if submitted:
         st.write(f"Calculating response cost: ${cost_data}")
         status.update(label="AI response complete!", state="complete")
 
-
-
-
     # handle any context data that we want to represent
     if st.session_state.assistant_type == 'Transaction analyser':
+
         campaigns = get_campaigns('search-campaigns', string_results)
         if len(campaigns):
             if opt_in:
